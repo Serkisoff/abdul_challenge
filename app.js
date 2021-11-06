@@ -1,22 +1,26 @@
 const days =["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const csv=require('csvtojson');
-const giveMe24HourTime=(timeStr)=>{
-    const amPmTimeArray = timeStr.split(/(am|pm)/)
-    let hours, minutes
-    [hours, minutes="00"] = amPmTimeArray[0].split(":")
-    let isAfternoon = amPmTimeArray[1] === "pm"
-    if (isAfternoon) {
-        hours = (parseInt(hours) + 12).toString();
-    }
-    return `${hours}:${minutes}`;
-};
 
-dataProcess();
+searchDate(new Date);
+
+async function searchDate(dateStr){
+    const resultList = [];
+    const processedData = await dataProcess();
+    let dayIndex = dateStr.getDay()-1;
+    if(dayIndex<0)dayIndex=6; //because i made first day of the week monday
+    const dayName = days[dayIndex];
+    const timeStr = dateStr.getUTCHours().toString()+":"+dateStr.getUTCMinutes().toString();
+    for(let r=0;r<processedData.length;r++){
+        if(processedData[r].day===dayName && isOpen(timeStr,processedData[r].openingTime,processedData[r].closingTime)){
+            resultList.push(processedData[r]);
+        }
+    }
+    console.log(resultList);
+}
 
 async function dataProcess(){
     let processedData=[];
     const sourceData = await csv({noheader:true}).fromFile('./rest_hours.csv');
-    console.log(sourceData);
     for(let r=0;r<sourceData.length;r++){
         const restaurantName=sourceData[r].field1;
         const restaurantOpeningTimesArr = sourceData[r].field2.split('/');
@@ -25,7 +29,7 @@ async function dataProcess(){
             processedData=[...processedData,...restaurantNewRecordsArr];
         }
     }
-    console.log(processedData);
+    return processedData;
 }
 
 function getDays(restName,str){
@@ -72,6 +76,27 @@ function getDays(restName,str){
 function getOpeningHoursArray(openingHoursString) {
     let openingHoursArray = openingHoursString.trim().split("-")
     return openingHoursArray.map(giveMe24HourTime);
+}
+
+function isOpen(timeOfDay, openingTime, closingTime){
+    return timeInMinutesFromMidnight(openingTime) <= timeInMinutesFromMidnight(timeOfDay) && timeInMinutesFromMidnight(timeOfDay) <= timeInMinutesFromMidnight(closingTime)
+}
+
+function timeInMinutesFromMidnight(timeString) {
+    let hours, minutes
+    [hours, minutes, ...rest] = timeString.trim().split(":")
+    return parseInt(hours) * 60 + parseInt(minutes)
+}
+
+function giveMe24HourTime(timeStr){
+    const amPmTimeArray = timeStr.split(/(am|pm)/)
+    let hours, minutes
+    [hours, minutes="00"] = amPmTimeArray[0].split(":")
+    let isAfternoon = amPmTimeArray[1] === "pm"
+    if (isAfternoon) {
+        hours = (parseInt(hours) + 12).toString();
+    }
+    return `${hours}:${minutes}`;
 }
 
 
