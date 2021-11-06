@@ -1,103 +1,76 @@
-const days =["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-const csv=require('csvtojson');
-
-searchDate(new Date);
+const dataProcessor = require('./parseCSV');
 
 async function searchDate(dateStr){
     const resultList = [];
-    const processedData = await dataProcess();
+    const processedData = await dataProcessor.dataProcess();
     let dayIndex = dateStr.getDay()-1;
     if(dayIndex<0)dayIndex=6; //because i made first day of the week monday
-    const dayName = days[dayIndex];
+    const dayName = dataProcessor.days[dayIndex];
     const timeStr = dateStr.getUTCHours().toString()+":"+dateStr.getUTCMinutes().toString();
     for(let r=0;r<processedData.length;r++){
-        if(processedData[r].day===dayName && isOpen(timeStr,processedData[r].openingTime,processedData[r].closingTime)){
+        if(processedData[r].day===dayName && dataProcessor.isOpen(timeStr,processedData[r].openingTime,processedData[r].closingTime)){
             resultList.push(processedData[r]);
         }
     }
     console.log(resultList);
+    return resultList;
 }
+searchDate(new Date());
 
-async function dataProcess(){
-    let processedData=[];
-    const sourceData = await csv({noheader:true}).fromFile('./rest_hours.csv');
-    for(let r=0;r<sourceData.length;r++){
-        const restaurantName=sourceData[r].field1;
-        const restaurantOpeningTimesArr = sourceData[r].field2.split('/');
-        for(let t=0;t<restaurantOpeningTimesArr.length;t++){
-            const restaurantNewRecordsArr=getDays(restaurantName,restaurantOpeningTimesArr[t]);
-            processedData=[...processedData,...restaurantNewRecordsArr];
+// above is for the main objective -----------------------------------------------------------------------
+// Below is for the Bonus2 -------------------------------------------------------------------------------
+const MongoClient = require('mongodb').MongoClient;
+const url = "mongodb://localhost:27017";
+
+
+MongoClient.connect(url, async function(err, db) {
+    if (err) throw err;
+    const dbo = db.db("abdul_challenge");
+    console.log("Database created!");
+    await migrateFromCSV(dbo); //Optional
+    const restaurantList = await dbo.collection('restaurants').aggregate([{$lookup:{
+        from:'restaurant_opening_times',
+        localField:'_id',
+        foreignField:'restaurantId',
+        as:'openingTimes'
+        }}]).toArray();
+    console.log(restaurantList);
+    console.log('Finished');
+});
+
+async function migrateFromCSV(dbo){
+    await dbo.collection('restaurants').deleteMany();
+    await dbo.collection('restaurant_opening_times').deleteMany();
+    const data = await dataProcessor.dataProcess();
+    const groupBy = function(xs, key) {
+        return xs.reduce(function(rv, x) {
+            (rv[x[key]] = rv[x[key]] || []).push(x);
+            return rv;
+        }, {});
+    };
+    const restaurantGroupedByList = groupBy(data).undefined;
+    for(let r=0;r<restaurantGroupedByList.length;r++){
+        const restaurantResult = await dbo.collection('restaurants').insert({restaurantName:restaurantGroupedByList[r].restaurantName});
+        const openTimesList=[];
+        for(let t=0;t<data.length;t++){
+            if(data[t].restaurantName===restaurantGroupedByList[r].restaurantName){
+                openTimesList.push({
+                    restaurantId:restaurantResult.insertedIds[0],
+                    day:data[t].day,
+                    openingTime:data[t].openingTime,
+                    closingTime:data[t].closingTime,
+                });
+            }
         }
+        if(openTimesList.length>0) await dbo.collection('restaurant_opening_times').insertMany(openTimesList);
     }
-    return processedData;
 }
 
-function getDays(restName,str){
-    const resultArr = [];
-    const cleanedTxt = str.replaceAll(' ','');
-    const firstDigitIndex = cleanedTxt.search(/\d/);
-    let dayStringRaw = cleanedTxt.substr(0,firstDigitIndex);
-    const openingHoursRawStr = cleanedTxt.substr(firstDigitIndex);
-    const commaIndex=dayStringRaw.indexOf(',');
-    const dashIndex = dayStringRaw.indexOf('-');
-    const openingHours=getOpeningHoursArray(openingHoursRawStr);
-    if(commaIndex>-1 && commaIndex<dashIndex){
-        resultArr.push({
-            restaurantName:restName,
-            day:dayStringRaw.substr(0,3),
-            openingTime:openingHours[0],
-            closingTime:openingHours[1]
-        });
-        dayStringRaw=dayStringRaw.substr(commaIndex+1);
-    }
-    if(dayStringRaw.indexOf('-')===-1){
-        resultArr.push({
-            restaurantName:restName,
-            day:dayStringRaw.substr(0,3),
-            openingTime:openingHours[0],
-            closingTime:openingHours[1]
-        });
-    }else{
-        const dayArr = dayStringRaw.split('-');
-        const startDayIndex=days.indexOf(dayArr[0]);
-        const endDayIndex = days.indexOf(dayArr[1]);
-        for(let d=startDayIndex;d<endDayIndex+1;d++){
-            resultArr.push({
-                restaurantName:restName,
-                day:days[d],
-                openingTime:openingHours[0],
-                closingTime:openingHours[1]
-            });
-        }
-    }
-    return resultArr;
-}
 
-function getOpeningHoursArray(openingHoursString) {
-    let openingHoursArray = openingHoursString.trim().split("-")
-    return openingHoursArray.map(giveMe24HourTime);
-}
 
-function isOpen(timeOfDay, openingTime, closingTime){
-    return timeInMinutesFromMidnight(openingTime) <= timeInMinutesFromMidnight(timeOfDay) && timeInMinutesFromMidnight(timeOfDay) <= timeInMinutesFromMidnight(closingTime)
-}
 
-function timeInMinutesFromMidnight(timeString) {
-    let hours, minutes
-    [hours, minutes, ...rest] = timeString.trim().split(":")
-    return parseInt(hours) * 60 + parseInt(minutes)
-}
 
-function giveMe24HourTime(timeStr){
-    const amPmTimeArray = timeStr.split(/(am|pm)/)
-    let hours, minutes
-    [hours, minutes="00"] = amPmTimeArray[0].split(":")
-    let isAfternoon = amPmTimeArray[1] === "pm"
-    if (isAfternoon) {
-        hours = (parseInt(hours) + 12).toString();
-    }
-    return `${hours}:${minutes}`;
-}
+
 
 
 
